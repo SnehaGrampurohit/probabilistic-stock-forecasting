@@ -35,7 +35,7 @@ num_features = st.selectbox('Select number of features for the model:', [5, 7, 9
 
 # Fetch stock data based on user input
 symbol = 'AMZN'
-end_date = datetime(2024, 12, 31)
+end_date = datetime.today()
 start_date = datetime(end_date.year - num_years, end_date.month, end_date.day)
 
 
