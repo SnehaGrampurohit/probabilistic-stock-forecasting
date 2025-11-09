@@ -123,6 +123,7 @@ def run_gmm_model(
         # pick the top (most probable) predicted price
         best_mean = sorted_means[0]
         best_prob = sorted_probs[0]
+        print(best_prob)
         top_prices.append(best_mean)
 
         # PROBABILITY IN INTERVAL [best_mean - delta, best_mean + delta]
@@ -132,6 +133,8 @@ def run_gmm_model(
             prob = norm.cdf(best_mean + delta, mu, sigma) - norm.cdf(best_mean - delta, mu, sigma)
             interval_prob += weight * prob
         interval_probs.append(interval_prob)
+        print(interval_prob)
+
 
         # CENTRAL PREDICTION INTERVAL (e.g., 80%) from GMM CDF
         cdf_vals = gmm_cdf(best_gmm, x_points)
@@ -239,6 +242,7 @@ def run_gmm_model(
         price_idx = np.argmin(np.abs(np.array(heat_prices) - price))
         predicted_probs.append(prob_matrix[price_idx, i])
 
+
     # 2. Build Plotly figure
     fig = go.Figure()
 
@@ -284,7 +288,7 @@ def run_gmm_model(
     ))
 
     fig.update_layout(
-        title="Probability Distribution Heatmap for Last 7 Days<br>(Red ×: Predicted, Black ○: Actual)",
+        #title="Probability Distribution Heatmap for Last 7 Days",
         xaxis=dict(title="Date", tickangle=-45),
         yaxis=dict(title="Price"),
         margin=dict(l=60, r=20, t=80, b=80),
@@ -295,18 +299,18 @@ def run_gmm_model(
     if show_plots:
         st.plotly_chart(fig, use_container_width=True)
 
-	
-# Keep only the average means for the days displayed in the heatmap
-gmm_avg_pred_prices = pd.Series(avg_pred_prices[-len(heat_dates):])
+    # Keep only the average means for the days displayed in the heatmap
+    gmm_avg_pred_prices = pd.Series(avg_pred_prices[-len(heat_dates):])
 
-# Return extra info for UI
-return (
-    np.array(top_prices),       # predicted_prices  (GMM mode)
+    # Return extra info for tab5 heatmap, not just summary stats
+
+	return (
+    np.array(top_prices),
     predicted_samples,
-    np.array(interval_probs),   # prob within ±$delta around the mode
-    np.array(predicted_probs),  # <-- ADD THIS (Relative probability at displayed top price)
-    np.array(interval_low),     # interval_80_lower
-    np.array(interval_high),    # interval_80_upper
+    np.array(interval_probs),
+    np.array(predicted_probs),
+    np.array(interval_low),
+    np.array(interval_high),
     heat_dates,
     heat_prices,
     prob_matrix,
@@ -314,5 +318,4 @@ return (
     display_actuals,
     gmm_avg_pred_prices
 )
-
 
