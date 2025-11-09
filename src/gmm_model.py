@@ -295,54 +295,24 @@ def run_gmm_model(
     if show_plots:
         st.plotly_chart(fig, use_container_width=True)
 
-    # Keep only the average means for the days displayed in the heatmap
-    gmm_avg_pred_prices = pd.Series(avg_pred_prices[-len(heat_dates):])
+	
+# Keep only the average means for the days displayed in the heatmap
+gmm_avg_pred_prices = pd.Series(avg_pred_prices[-len(heat_dates):])
+
+# Return extra info for UI
+return (
+    np.array(top_prices),       # predicted_prices  (GMM mode)
+    predicted_samples,
+    np.array(interval_probs),   # prob within ±$delta around the mode
+    np.array(predicted_probs),  # <-- ADD THIS (Relative probability at displayed top price)
+    np.array(interval_low),     # interval_80_lower
+    np.array(interval_high),    # interval_80_upper
+    heat_dates,
+    heat_prices,
+    prob_matrix,
+    display_top_prices,
+    display_actuals,
+    gmm_avg_pred_prices
+)
 
 
-
-    # Return extra info for tab5 heatmap, not just summary stats
-    return (
-        np.array(top_prices),
-        predicted_samples,
-        np.array(interval_probs),
-        np.array(interval_low),
-        np.array(interval_high),
-        heat_dates,         # NEW
-        heat_prices,        # NEW
-        prob_matrix,        # NEW
-        display_top_prices, # NEW
-        display_actuals,    # NEW
-        gmm_avg_pred_prices
-    )
-
-
-"""2. Why is the “Relative Probability” Error Higher?
-
-A. The Mode Can Miss Outliers
-	•	The “relative probability” value is the mode—it picks the price where the GMM assigns the highest probability, but ignores all other plausible outcomes.
-	•	If data has multiple plausible price clusters (is multi-modal), or if the true price falls between modes, the mode prediction can be off.
-	•	The mode is not robust to the shape of the distribution. For skewed or multi-peaked distributions, it may pick a peak that is not actually closest to the true value.
-
-B. The Mean (Average Predicted Price) Balances All Possibilities
-	•	The mean (average predicted price) considers all the component means and their probabilities.
-	•	Even if the distribution is wide or has multiple peaks, the mean provides a central tendency, often closer to the “center of mass” of the true values.
-
-C. Typical in Probabilistic Models
-	•	In general, when distributions are symmetric and unimodal, the mode and mean are close, and errors are similar.
-	•	In real-world financial data, distributions are often asymmetric and multi-modal, so the mean tends to provide a more stable, lower-error prediction.
-	•	Statistically, the mean minimizes the squared error (RMSE).
-
-
-⸻
-
-4. Analogy
-	•	Imagine rolling a dice where the sides are not equally likely (weighted dice).
-	•	Mode: Always bet on the side most likely to appear (could be 6, but sometimes 3 appears just as often).
-	•	Mean: Bet on the average value across many rolls; over time, this is more accurate.
-
-⸻
-
-5. Conclusion
-
-The higher error for “Relative Probability” simply reflects the fact that in noisy or multi-modal data, always picking the “most likely” single value is less robust than taking the average of all likely values. The mean is statistically optimal for minimizing average error, which is why you see lower RMSE and MAE there.
-"""
