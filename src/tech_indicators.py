@@ -1,29 +1,78 @@
 
-import talib
+# src/tech_indicators.py
+
+import pandas as pd
+
+try:
+    import pandas_ta as ta
+except Exception as e:
+    raise ImportError(
+        "pandas_ta is required for technical indicators on Streamlit Cloud. "
+        "Add `pandas_ta` to requirements.txt and reinstall. Original error: "
+        + str(e)
+    )
 
 
-def calculate_technical_indicators(df):
+def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
-    This function calculates technical indicators using the talib library and adds them to the DataFrame.
+    Compute technical indicators using pandas_ta and append them to the DataFrame.
+
+    Required input columns: ['Open','High','Low','Close','Volume']
+    Output columns added (matching your app expectations):
+      rsi, ma50, ma200, macd, signal_line, wpr, slowk, slowd, ult_oscillator,
+      lag1, lag2, lag3
     """
+    df = df.copy()
 
-    # Calculate technical indicators
-    df['rsi'] = talib.RSI(df['Close'], timeperiod=14)
-    df['ma50'] = df['Close'].rolling(window=50).mean()
-    df['ma200'] = df['Close'].rolling(window=200).mean()
-    df['macd'], df['signal_line'], _ = talib.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
-    df['wpr'] = talib.WILLR(df['High'], df['Low'], df['Close'], timeperiod=14)
-    df['slowk'], df['slowd'] = talib.STOCH(df['High'], df['Low'], df['Close'], fastk_period=14, slowk_period=3,
-                                           slowk_matype=0, slowd_period=3, slowd_matype=0)
-    df['ult_oscillator'] = talib.ULTOSC(df['High'], df['Low'], df['Close'], timeperiod1=7, timeperiod2=14, timeperiod3=28)
-    #df['mfi'] = talib.MFI(df['High'], df['Low'], df['Close'], df['Volume'], timeperiod=14)
+    # --- Safety checks
+    required_cols = {"Open", "High", "Low", "Close", "Volume"}
+    missing = required_cols.difference(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns for indicators: {sorted(missing)}")
 
-    # Add lag features
-    df['lag1'] = df['Close'].shift(1)  # Price from the previous day
-    df['lag2'] = df['Close'].shift(2)  # Price from two days ago
-    df['lag3'] = df['Close'].shift(3)  # Price from three days ago
+    close = df["Close"]
+    high = df["High"]
+    low = df["Low"]
 
-    # Drop NaN values after adding indicators
-    df.dropna(axis=0, inplace=True)
+    # --- Momentum / Oscillators
+    df["rsi"] = ta.rsi(close, length=14)
+
+    # Williams %R
+    df["wpr"] = ta.willr(high, low, close, length=14)
+
+    # Stochastic Oscillator (Slow %K / %D)
+    stoch = ta.stoch(high, low, close, k=14, d=3, smooth_k=3)
+    # pandas_ta returns columns like 'STOCHk_14_3_3' and 'STOCHd_14_3_3'
+    if stoch is not None and not stoch.empty:
+        df["slowk"] = stoch.iloc[:, 0]
+        df["slowd"] = stoch.iloc[:, 1]
+    else:
+        df["slowk"] = pd.NA
+        df["slowd"] = pd.NA
+
+    # MACD (12,26,9)
+    macd = ta.macd(close, fast=12, slow=26, signal=9)
+    # Columns: 'MACD_12_26_9', 'MACDh_12_26_9', 'MACDs_12_26_9'
+    if macd is not None and not macd.empty:
+        df["macd"] = macd["MACD_12_26_9"]
+        df["signal_line"] = macd["MACDs_12_26_9"]
+    else:
+        df["macd"] = pd.NA
+        df["signal_line"] = pd.NA
+
+    # Moving Averages
+    df["ma50"] = ta.sma(close, length=50)
+    df["ma200"] = ta.sma(close, length=200)
+
+    # Ultimate Oscillator (7,14,28)
+    df["ult_oscillator"] = ta.uo(high, low, close, fast=7, medium=14, slow=28)
+
+    # Lags of close
+    df["lag1"] = df["Close"].shift(1)
+    df["lag2"] = df["Close"].shift(2)
+    df["lag3"] = df["Close"].shift(3)
+
+    # Drop initial rows with NaNs caused by indicator windows
+    df.dropna(inplace=True)
 
     return df
