@@ -1,9 +1,8 @@
-
 import matplotlib.pyplot as plt
 import streamlit as st
 
 
-def plot_results(train_df, test_df, y_test, predicted_prices):
+def plot_results(train_df, test_df, y_test, gmm_avg_pred_prices,predicted_prices):
     """
     Plots the training closing prices, actual test prices,
     and predicted (most-probable) prices.
@@ -37,11 +36,21 @@ def plot_results(train_df, test_df, y_test, predicted_prices):
     # 3) Predicted (most-probable) prices
     ax.plot(
         test_df['Date'],
-        predicted_prices,
-        label='Predicted Prices (GMM Mode)',
+        gmm_avg_pred_prices,
+        label='Predicted Prices (Estimated Mean of GMM)',
         color='green',
         marker='x'
     )
+
+    ax.plot(
+        test_df['Date'],
+        predicted_prices,
+        label='Predicted Prices (GMM Mode)',
+        color='red',
+        marker='x'
+    )
+
+
 
     # Formatting
     ax.set_xlabel('Date')
@@ -53,7 +62,7 @@ def plot_results(train_df, test_df, y_test, predicted_prices):
     st.pyplot(fig)
 
 
-def plot_results_sub(test_df, y_test, predicted_prices):
+def plot_results_sub(test_df, y_test, gmm_avg_pred_prices, predicted_prices):
     """
     Plots the actual test prices and the predicted (most-probable) prices
     over the last 7 days.
@@ -72,11 +81,21 @@ def plot_results_sub(test_df, y_test, predicted_prices):
     # Predicted (most-probable) prices
     ax.plot(
         test_df['Date'],
-        predicted_prices,
-        label='Predicted Prices (Last 7 Days)',
+        gmm_avg_pred_prices,
+        label='Predicted Prices (Estimated Mean: Last 7 Days)',
         color='green',
         marker='x'
     )
+
+    ax.plot(
+        test_df['Date'],
+        predicted_prices,
+        label='Predicted prices (GMM Mode: Last 7 Days)',
+        color='red',
+        marker='x'
+    )
+
+
 
     ax.set_xlabel('Date')
     ax.set_ylabel('Price')
