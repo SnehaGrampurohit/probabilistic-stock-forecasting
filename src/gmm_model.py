@@ -302,7 +302,7 @@ def run_gmm_model(
     # Keep only the average means for the days displayed in the heatmap
     gmm_avg_pred_prices = pd.Series(avg_pred_prices[-len(heat_dates):])
     # Return extra info for tab5 heatmap, not just summary stats
-return (
+    return (
         np.array(top_prices),
         predicted_samples,
         np.array(interval_probs),
