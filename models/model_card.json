@@ -1,0 +1,12 @@
+{
+  "model": "RandomForestRegressor + RFE",
+  "symbol": "AMZN",
+  "trained_months": 60,
+  "n_features_selected": 7,
+  "timestamp": "2025-11-11T12:15:00.026320Z",
+  "metrics": {
+    "mae": 9.43323730606281,
+    "rmse": 10.098304568421856,
+    "test_days": 7
+  }
+}
