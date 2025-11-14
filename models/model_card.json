@@ -1,0 +1,24 @@
+{
+  "model": "RandomForestRegressor + RFE",
+  "symbol": "AMZN",
+  "trained_months": 60,
+  "n_features_selected": 5,
+  "selected_features": [
+    "Open",
+    "High",
+    "Low",
+    "wpr",
+    "lag1"
+  ],
+  "hyperparameters": {
+    "max_depth": null,
+    "min_samples_leaf": 1,
+    "n_estimators": 500
+  },
+  "timestamp": "2025-11-14T10:42:59.257704Z",
+  "metrics": {
+    "mae": 2.5760837358747204,
+    "rmse": 2.6695812074346867,
+    "test_days": 7
+  }
+}

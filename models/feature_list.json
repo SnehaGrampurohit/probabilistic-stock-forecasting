@@ -1,0 +1,21 @@
+[
+  "Open",
+  "High",
+  "Low",
+  "Volume",
+  "wpr",
+  "rsi",
+  "slowk",
+  "slowd",
+  "macd",
+  "ma50",
+  "ma200",
+  "ult_oscillator",
+  "day",
+  "month",
+  "quarter",
+  "year",
+  "lag1",
+  "lag2",
+  "lag3"
+]

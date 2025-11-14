@@ -1,294 +1,344 @@
-import streamlit as st
+# src/main_app.py
+import json
+from pathlib import Path
 from datetime import datetime
-import yfinance as yf
+
+import numpy as np
+import pandas as pd
+import streamlit as st
+import joblib
 import matplotlib.pyplot as plt
 
+import yfinance as yf
+
 from tech_indicators import calculate_technical_indicators
-from random_forest_model import run_random_forest
 from gmm_model import run_gmm_model
-from evaluation import evaluate_model
-from plot_results import plot_results
-from plot_results import plot_results_sub
-from paper_methodology import paper_methodology
-import pandas as pd
+from plot_results import plot_results, plot_results_sub
 
+# ==============================
+# App config
+# ==============================
+st.set_page_config(
+    page_title="Probabilistic Stock Forecasting",
+    page_icon="📈",
+    layout="wide"
+)
 
+ROOT = Path(__file__).parent.parent
 
-# Streamlit interface for number of years and feature selection
-st.title("WELCOME TO PROBABILITY DISTRIBUTION PREDICTION OF STOCK PRICES DASHBOARD - AMAZON")
+# ==============================
+# Cache: artifacts
+# ==============================
+@st.cache_resource
 
-st.image('https://tse3.mm.bing.net/th/id/OIP.Cr9mnMQSaXgsyAJ0oQnQ6AHaD4?r=0&pid=Api', use_column_width=True)
+# Project root (one level above src/)
+def load_artifacts():
+    models_dir = models_dir = ROOT / "models"
+    rf = joblib.load(models_dir / "rf_model.pkl")
+    rfe = joblib.load(models_dir / "rfe.pkl")
+    feature_list = json.loads((models_dir / "feature_list.json").read_text())
+    return rf, rfe, feature_list
 
-# Tabs with icons
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📈 Introduction",
-    "🔍 Technical Indicators",
-    "🧠 Model Prediction : Method 1",
-    "🤖 Model Prediction: Method 2",
-    # "📊 All Models Performance Comparison"
-])
+@st.cache_data(ttl=24*3600)
+def load_stock_yf(symbol, start_date, end_date):
+    return yf.download(symbol, start=start_date, end=end_date,
+                       progress=False, auto_adjust=False)
 
-# Streamlit button for number of years
-num_years = st.selectbox('Select number of years for fetching stock data:', [1, 2, 3])
-num_features = st.selectbox('Select number of features for the model:', [5, 7, 9, 11, 16, 19])
+def load_local_snapshot(symbol):
+    data_dir = ROOT / "data"
+    candidates = [
+        data_dir / f"{symbol}.csv",
+        data_dir / f"{symbol}.parquet",
+        data_dir / f"{symbol.lower()}.csv",
+        data_dir / f"{symbol.lower()}.parquet",
+    ]
 
+    for fp in candidates:
+        if not fp.exists():
+            continue
+        if fp.suffix == ".csv":
+            df = pd.read_csv(fp)
+        else:
+            df = pd.read_parquet(fp)
 
-# Fetch stock data based on user input
-symbol = 'AMZN'
-end_date = datetime.today()
-start_date = datetime(end_date.year - num_years, end_date.month, end_date.day)
+        if "Date" in df.columns:
+            df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+            df = df.set_index("Date")
+        else:
+            df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0], errors="coerce")
+            df = df.set_index(df.columns[0])
 
+        df = df[~df.index.isna()].sort_index()
+        return df
+    return None
 
-@st.cache_data(ttl=3600)
-def load_stock(symbol, start_date, end_date):
-    return yf.download(symbol, start=start_date, end=end_date, progress=False)
+# ==============================
+# Small metrics
+# ==============================
+def pi_coverage(y_true, lo, hi):
+    y = pd.Series(y_true).reset_index(drop=True)
+    lo = pd.Series(lo).reset_index(drop=True)
+    hi = pd.Series(hi).reset_index(drop=True)
+    return float(((y >= lo) & (y <= hi)).mean())
 
-df = load_stock(symbol, start_date, end_date)
+def pinball_loss(y_true, y_pred, q=0.5):
+    y = np.asarray(y_true)
+    f = np.asarray(y_pred)
+    diff = y - f
+    return float(np.mean(np.maximum(q * diff, (q - 1) * diff)))
+
+# ==============================
+# Sidebar
+# ==============================
+with st.sidebar:
+    st.header("Settings")
+    symbol = st.selectbox("Ticker", ["AMZN"], index=0)
+    viz_months = st.selectbox(
+        "Visualization range (display only)",
+        [12, 24, 36],
+        index=1,
+        help="Only the displayed window — models are pre-trained."
+    )
+    want_refresh = st.checkbox(
+        "If local snapshot is missing, allow Yahoo Finance fetch",
+        value=False
+    )
+
+# Remove sidebar diagnostics switch
+show_diag = False    # Diagnostics only via 'Forecast → Advanced diagnostics'
+
+# ==============================
+# Visualization Window
+# ==============================
+today = datetime.today()
+start_date = datetime(today.year, today.month, today.day) - pd.DateOffset(months=viz_months)
+end_date = today
+
+# ==============================
+# Title
+# ==============================
+st.title("📈 Probability Distribution Prediction of Stock Prices — AMZN")
+st.caption("Inference-only demo: pre-trained Random Forest + RFE + GMM distribution. No live training.")
+
+# ==============================
+# Load Data
+# ==============================
+df = load_local_snapshot(symbol)
+
+if df is None:
+    if want_refresh:
+        with st.spinner("Fetching from Yahoo Finance…"):
+            df = load_stock_yf(symbol, start_date, end_date)
+    else:
+        st.error("No local data found. Place `data/AMZN.csv` or enable refresh.")
+        st.stop()
 
 if df.empty:
-    st.error(
-        f"Yfinance Server down : ['AMZN']: YFRateLimitError('Too Many Requests. Rate limited. Try after a while."
-    )
-    st.stop()  # Do not proceed if df is empty
+    st.error("Data empty. YFinance might be rate-limited.")
+    st.stop()
 
-# Flatten the MultiIndex in the columns
-df.columns = df.columns.get_level_values(0)
+# Flatten columns
+if isinstance(df.columns, pd.MultiIndex):
+    df.columns = df.columns.get_level_values(0)
 
+# Ensure numeric
+num_cols = ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
+for c in [c for c in num_cols if c in df.columns]:
+    df[c] = pd.to_numeric(df[c], errors='coerce')
 
+df = df.dropna(subset=['Open', 'High', 'Low', 'Close'])
 
-# Extract time components
-df['day'] = df.index.day
-df['month'] = df.index.month
-df['quarter'] = df.index.quarter
-df['year'] = df.index.year
+# Clip to window
+df = df.loc[df.index >= (today - pd.DateOffset(months=viz_months))].copy()
 
-# Call function to calculate technical indicators
+# Calendar features
+df["day"] = df.index.day
+df["month"] = df.index.month
+df["quarter"] = df.index.quarter
+df["year"] = df.index.year
+
+# Technical indicators
 df = calculate_technical_indicators(df)
+df["Date"] = df.index
 
-# Split into train and test datasets
-df['Date'] = df.index
-test_end_date = df.index[-1]
-test_start_date = test_end_date - pd.DateOffset(days=7)
+# Train/Test split
+if len(df) < 14:
+    st.warning("Not enough rows after indicators.")
+    st.stop()
 
-test_df = df.tail(7)
-train_df = df.iloc[:-7]
+test_df = df.tail(7).copy()
+train_df = df.iloc[:-7].copy()
 
+# ==============================
+# Load Artifacts
+# ==============================
+rf_model, rfe, feature_list = load_artifacts()
 
-# Feature set
-all_features = ['Open',
-                'High',
-                'Low',
-                'Volume',
-                'wpr',
-                'rsi',
-                'slowk',
-                'slowd',
-                'macd',
-                'ma50',
-                'ma200',
-                'ult_oscillator',
-                'day',
-                'month',
-                'quarter',
-                'year',
-                'lag1',
-                'lag2',
-                'lag3']
-X_train = train_df[all_features].values
-y_train = train_df['Close'].values
-X_test = test_df[all_features].values
-y_test = test_df['Close'].values
+missing = [f for f in feature_list if f not in df.columns]
+if missing:
+    st.error(f"Missing required features: {missing}")
+    st.stop()
 
-rf_model_base, rfe_base = run_random_forest(X_train, y_train, num_features)
-X_train_selected = rfe_base.transform(X_train)
-X_test_selected = rfe_base.transform(X_test)
+X_test = test_df[feature_list].values
+y_test = test_df["Close"].values
+X_test_sel = rfe.transform(X_test)
 
-# tab2 : Intro:
-with (tab1):
-    st.subheader("Introduction")
-    st.write(
-        "This application aims to predict stock closing prices by exploring two distinct methods for model development and optimization. We leverage historical stock data, including features like Open, High, Low, Volume, and RSI, to forecast future closing prices. The application implements two different methodologies that combine feature selection, machine learning models, and optimization techniques")
+# ==============================
+# Run GMM
+# ==============================
+(predicted_prices,
+ predicted_samples,
+ interval_probs,
+ rel_mode_probs,
+ interval_80_lower,
+ interval_80_upper,
+ heat_dates,
+ heat_prices,
+ prob_matrix,
+ display_top_prices,
+ display_actuals,
+ gmm_avg_pred_prices,
+ heatmap_predicted_probs
+) = run_gmm_model(
+    rf_model,
+    X_test_sel,
+    y_test,
+    test_df,
+    max_components=3,
+    delta=1.0,
+    pred_interval_level=0.80,
+    show_plots=show_diag
+)
 
-    st.subheader("Technical Indicators")
-    st.write(
-        "Technical indicators help to analyze price patterns, momentum, and market sentiment, aiding in better decision-making for trade entries and exits. They provide quantitative measures to identify trends, reversals, and potential price movements, increasing the accuracy of predictions.")
+# Ensure numeric
+y_test = np.asarray(y_test, float)
+predicted_prices = np.asarray(predicted_prices, float)
+gmm_avg_pred_prices = np.asarray(gmm_avg_pred_prices, float)
 
-    st.write("The technical indicators used are RSI, WPR, MACD, MA50, MA200, Stochastic Oscillator")
+# ==============================
+# KPIs
+# ==============================
+rmse_mode = float(np.sqrt(np.mean((y_test - predicted_prices)**2)))
+mae_mode  = float(np.mean(np.abs(y_test - predicted_prices)))
+rmse_avg  = float(np.sqrt(np.mean((y_test - gmm_avg_pred_prices)**2)))
+mae_avg   = float(np.mean(np.abs(y_test - gmm_avg_pred_prices)))
 
-    st.subheader(
-        "Method 1: Probablistic Distribution of Stock Prices with Feature Selection using RFE, Random Forest, and Gaussian Mixture Model (GMM)")
-    st.write(
-        "In this approach, we start by applying Recursive Feature Elimination (RFE) to select the most relevant features for predicting stock closing prices. We then use a Random Forest Regressor for model training and prediction. To fine-tune the hyperparameters of the Random Forest, we employ Grid Search Cross-Validation (Grid Search CV), systematically exploring different parameter combinations to identify the best-performing model configuration.After obtaining predictions from each tree in the Random Forest, we further improve the model by incorporating a Gaussian Mixture Model (GMM). Specifically, we treat the predictions from each tree as samples for GMM fitting. Using the Bayesian Information Criterion (BIC), we determine the optimal number of components in the GMM to best capture the distribution of predictions. This hybrid approach ensures that we effectively model both feature importance and the underlying data distribution, enhancing prediction accuracy while balancing model complexity.")
+coverage80 = pi_coverage(y_test, interval_80_lower, interval_80_upper)
+pinball50  = pinball_loss(y_test, gmm_avg_pred_prices)
 
-    st.subheader("Relative Probability and Average Price")
-    st.write(
-        " The relative probability represents the model’s confidence in the most likely predicted price. Specifically, it measures how strongly the Gaussian Mixture Model (GMM) favors the most probable price, compared to all other plausible values. A higher value indicates that the model’s predictions are more concentrated around a single price, reflecting greater certainty.")
+# ==============================
+# Tabs
+# ==============================
+tab_forecast, tab_cal = st.tabs(["🔮 Forecast", "🧪 Calibration"])
 
-    st.write(
-        "For example: If the relative probability is high, the model is confident that the closing price will be close to the predicted value. If it is low, the prediction is more uncertain or spread across several possible values.")
+# ---------- Forecast Tab ----------
+with tab_forecast:
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("RMSE (mode)", f"{rmse_mode:,.2f}")
+    col2.metric("MAE (mode)", f"{mae_mode:,.2f}")
+    col3.metric("RMSE (avg)", f"{rmse_avg:,.2f}")
+    col4.metric("MAE (avg)", f"{mae_avg:,.2f}")
 
-    st.write(
-        "The average predicted price is the weighted average of all possible prices considered by the GMM, taking into account the probability of each scenario. This value represents the “expected” or “average” closing price according to the full probability distribution, providing a comprehensive summary of all likely outcomes.")
+    st.subheader("Last 7 Days — Interval Summary")
 
-    st.write(
-        "For example: Even if there are multiple possible price levels, the average predicted price gives a single summary value, balancing all scenarios by their likelihood.")
-
-    st.subheader(
-        "Method 2: Probablistic Distribution of Stock Prices using Gaussian Distribution and Optimized Weights using Maximum Likelihood Estimation (MLE)")
-    st.write(
-        "In the second approach, we employ a Random Forest Regressor, where each leaf node is modeled using a Gaussian distribution based on the mean and variance of the closing prices that fall within each node. The predictions from each tree in the forest are then combined using a weighted optimization. The weights are determined by Maximum Likelihood Estimation (MLE), maximizing the log-likelihood of the observed data. This method assigns higher weights to trees that demonstrate better predictive performance, leading to more accurate forecasts of stock closing prices.")
-
-# Tab 2: Visualizing Technical Indicators
-with tab2:
-    st.subheader("Technical Indicator Visualizations")
-
-    st.write(
-        "RSI (Relative Strength Index): Identifies overbought or oversold market conditions, helping to signal potential reversals.")
-
-    st.write(
-        "WPR (Williams %R): Measures overbought and oversold levels based on price extremes, aiding in timing entry and exit points.")
-
-    st.write(
-        "Stochastic Oscillator: Compares a particular closing price to a range of prices over time, signaling potential trend reversals.")
-
-    st.write(
-        "MACD (Moving Average Convergence Divergence): Indicates momentum by comparing short and long-term price trends, useful for detecting buy/sell signals.")
-
-    st.write(
-        "MA50 & MA200 (Moving Averages): Trend-following indicators that smooth price data over 50 and 200 days, respectively, to show the general direction of the market.")
-
-    # Allow the user to select which indicator to visualize
-    indicator = st.selectbox('Select Technical Indicator to visualize:',
-                             ['RSI', 'MACD', 'Stochastic Oscillator', 'Williams %R', 'MA50', 'MA200'])
-
-    # Plot selected indicator
-    fig, ax = plt.subplots()
-
-    if indicator == 'RSI':
-        ax.plot(df.index, df['rsi'], label='RSI')
-        ax.axhline(70, color='red', linestyle='--', label='Overbought (70)')
-        ax.axhline(30, color='green', linestyle='--', label='Oversold (30)')
-    elif indicator == 'MACD':
-        ax.plot(df.index, df['macd'], label='MACD')
-        ax.plot(df.index, df['signal_line'], label='Signal Line')
-    elif indicator == 'Stochastic Oscillator':
-        ax.plot(df.index, df['slowk'], label='Slow %K')
-        ax.plot(df.index, df['slowd'], label='Slow %D')
-        ax.axhline(80, color='red', linestyle='--', label='Overbought (80)')
-        ax.axhline(20, color='green', linestyle='--', label='Oversold (20)')
-    elif indicator == 'Williams %R':
-        ax.plot(df.index, df['wpr'], label='Williams %R')
-        ax.axhline(-20, color='red', linestyle='--', label='Overbought (-20)')
-        ax.axhline(-80, color='green', linestyle='--', label='Oversold (-80)')
-    # elif indicator == 'MFI':
-    # ax.plot(df.index, df['mfi'], label='MFI')
-    # ax.axhline(80, color='red', linestyle='--', label='Overbought (80)')
-    # ax.axhline(20, color='green', linestyle='--', label='Oversold (20)')
-    elif indicator == 'MA50':
-        ax.plot(df.index, df['ma50'], label='MA50')
-    elif indicator == 'MA200':
-        ax.plot(df.index, df['ma200'], label='MA200')
-
-    # Customizing the plot
-    ax.set_xlabel('Date')
-    ax.set_ylabel(f'{indicator} Value')
-    ax.legend()
-    st.pyplot(fig)
-
-with tab3:
-    st.subheader("Method 1 : Random Forest and GMM")
-
-    # Streamlit selectbox for number of features
-    (
-        predicted_prices,
-        predicted_samples,
-        interval_probs,
-        predicted_probs,
-        interval_80_lower,
-        interval_80_upper,
-        heat_dates,
-        heat_prices,
-        prob_matrix,
-        display_top_prices,
-        display_actuals,
-        gmm_avg_pred_prices
-    ) = run_gmm_model(
-        rf_model_base,
-        X_test_selected,
-        y_test,
-        test_df,
-        delta=1.0,
-        pred_interval_level=0.80,
-        show_plots=True
-    )
-    st.subheader("Evaluation Metrics")
-    st.subheader("Model performance metrics : Relative Probability Error")
-    # Model evaluation
-    evaluate_model(predicted_prices, y_test)
-
-    st.subheader("Model performance metrics : Average Predicted Price")
-    evaluate_model(gmm_avg_pred_prices, y_test)
-
-    # Table summary
     summary_df = pd.DataFrame({
         "Date": test_df['Date'].dt.strftime('%Y-%m-%d'),
         "Predicted Price": predicted_prices,
         "Probability in ±$1": interval_probs,
-        "Relative Probability": predicted_probs,
+        "Relative Probability": rel_mode_probs,
         "80% Lower": interval_80_lower,
         "80% Upper": interval_80_upper
     })
-    st.subheader("Prediction Intervals from GMM")
-    st.dataframe(
-        summary_df.style.format({
-            "Predicted Price": "{:.2f}",
-            "Probability in ±$1": "{:.2%}",
-            "Relative Probability": "{:.2%}",
-            "80% Lower": "{:.2f}",
-            "80% Upper": "{:.2f}"
-        })
-    )
 
-    # --- Generate and display sentences in requested style ---
-    st.subheader("Daily Prediction Summary")
-    for i in range(len(predicted_prices)):
-        date = test_df['Date'].dt.strftime('%Y-%m-%d').iloc[i]
-        pred = predicted_prices[i]
-        prob = interval_probs[i]
-        lower = pred - 1.0
-        upper = pred + 1.0
-        int80_low = interval_80_lower[i]
-        int80_high = interval_80_upper[i]
-        st.markdown(
-            f""" On {date}: </b> We predict the closing price will be <b>${pred:.2f} 
+    st.dataframe(summary_df.style.format({
+        "Predicted Price": "{:.2f}",
+        "Probability in ±$1": "{:.2%}",
+        "Relative Probability": "{:.2%}",
+        "80% Lower": "{:.2f}",
+        "80% Upper": "{:.2f}",
+    }), use_container_width=True)
 
-            There is a  {prob:.0%} probability  the actual price will fall within  ${lower:.2f}  and  ${upper:.2f} , and an  80% probability  it will be between  ${int80_low:.2f}  and  ${int80_high:.2f}.""",
-            unsafe_allow_html=True
-        )
-
-    # Plot the full history + predictions
+    st.subheader("Prices")
     plot_results(train_df, test_df, y_test, gmm_avg_pred_prices, predicted_prices)
     plot_results_sub(test_df, y_test, gmm_avg_pred_prices, predicted_prices)
 
-with tab4:
-    st.subheader("Method 2: Optimized Random Forest with MLE")
+    with st.expander("Advanced diagnostics (slow)"):
+        st.caption("Optional plots and heatmaps. Disabled by default to keep the app fast.")
+        colA, colB = st.columns(2)
+        show_dist = colA.checkbox("Show per-day BIC & distribution plots", value=False)
+        show_heatmap = colB.checkbox("Show probability heatmap (last 7 days)", value=True)
 
-    # Prepare features
-    X_train = train_df[all_features].values
-    y_train = train_df['Close'].values
-    X_test = test_df[all_features].values
-    y_test = test_df['Close'].values
+        # 1) Re-run GMM with plotting only if user requests
+        if show_dist:
+            try:
+                _ = run_gmm_model(
+                    rf_model,
+                    X_test_sel,
+                    y_test,
+                    test_df,
+                    max_components=3,
+                    delta=1.0,
+                    pred_interval_level=0.80,
+                    show_plots=True
+                )
+                st.success("Per-day BIC and distribution plots rendered above.")
+            except Exception as e:
+                st.error(f"Could not render distribution plots: {e}")
 
-    # Train RF and feature selection on train set only
+        # 2) Heatmap from returned arrays (no re-fit needed)
+        if show_heatmap:
+            try:
+                # Use the values already returned earlier on the Forecast tab call
+                # If your variables are named differently, adjust here.
+                import plotly.graph_objects as go
+
+                fig = go.Figure()
+                fig.add_trace(go.Heatmap(
+                    x=heat_dates, y=heat_prices, z=prob_matrix,
+                    colorscale='YlGnBu',
+                    colorbar=dict(title='Probability'),
+                    zmin=0, zmax=prob_matrix.max()
+                ))
+                fig.add_trace(go.Scatter(
+                    x=heat_dates, y=display_top_prices,
+                    mode='markers', marker=dict(symbol='x', size=16, color='red'),
+                    name='GMM Relative Probability'
+                ))
+                fig.add_trace(go.Scatter(
+                    x=heat_dates, y=display_actuals,
+                    mode='markers', marker=dict(symbol='circle', size=10, color='green'),
+                    name='Actual Values'
+                ))
+                fig.update_layout(
+                    title="Probability Distribution Heatmap (last 7 days)",
+                    xaxis=dict(title="Date", tickangle=-45),
+                    yaxis=dict(title="Price"),
+                    height=520, margin=dict(l=60, r=20, t=60, b=60),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Could not render heatmap: {e}")
 
 
-    # Call methodology
-    paper_methodology(
-        rf_model_base,
-        X_train_selected, y_train,
-        X_test_selected, y_test,
-        train_df, test_df
-    )
+# ---------- Calibration Tab ----------
+with tab_cal:
+    st.subheader("Headline Calibration")
 
-st.caption("This dashboard is for educational purposes and not investment advice.")
+    c1, c2 = st.columns(2)
+    c1.metric("80% PI Coverage", f"{coverage80:.0%}")
+    c2.metric("Pinball Loss (q=0.5)", f"{pinball50:,.3f}")
 
+    st.markdown("""
+    **Interpretation**
+    - **PI Coverage (80%)**: fraction of actual closes inside the 80% interval.
+    - **Pinball Loss (q=0.5)**: median quantile loss.
+    """)
+
+    st.subheader("Residuals (Actual − Predicted)")
+    fig, ax = plt.subplots()
+    ax.plot(test_df["Date"], y_test - gmm_avg_pred_prices, marker='o')
+    ax.axhline(0, linestyle='--', color='gray')
+    st.pyplot(fig)
+
+st.caption("This dashboard is for educational purposes only and not investment advice.")

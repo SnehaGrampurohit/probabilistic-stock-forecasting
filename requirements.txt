@@ -8,3 +8,4 @@ plotly>=5.22
 seaborn>=0.13
 scipy>=1.11
 pandas_ta
+joblib>=1.3
