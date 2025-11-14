@@ -1,132 +1,86 @@
-Probability Distribution Prediction of Stock Prices
+Probabilistic Stock Forecasting (AMZN)
 
-Random Forest + Gaussian Mixture Models (GMM) & Gaussian-Leaf RF with MLE Optimization
+Inference-only demo of probabilistic stock price forecasting using
 
-🌐 Live Demo
+Random Forest + RFE feature selection + Gaussian Mixture Model (GMM) distribution
 
-Experience the full interactive dashboard here:
+The Streamlit app is deployed here:
 
-👉 https://probabilistic-stock-forecasting-grampurohit.streamlit.app/
+App: https://probabilistic-stock-forecasting-grampurohit.streamlit.app/
 
-
-📌 Overview
-
-This project implements probabilistic forecasting of stock closing prices, based on my Master’s thesis in Data Science.
-Instead of predicting a single price, the system models the entire distribution of possible future prices, capturing uncertainty, variance, and confidence intervals.
-
-The application uses:
-
-Method 1 — Random Forest + Gaussian Mixture Model (GMM)
-	•	Recursive Feature Elimination (RFE) for feature selection
-	•	Random Forest base model
-	•	GridSearchCV for hyperparameter tuning
-	•	Per-tree predictions → used as samples for GMM
-	•	BIC-driven component selection
-	•	Outputs:
-	•	Most probable price (mode)
-	•	Expected price (weighted mean)
-	•	±$δ interval probability
-	•	80% prediction intervals
-	•	Daily GMM distribution plots
-	•	Probability heatmaps
-
-Method 2 — Gaussian-Leaf Random Forest + MLE Weight Optimization
-
-	•	Each leaf node modeled as a Gaussian (mean + variance)
-  
-	•	Variances aggregated to produce predictive uncertainty
-  
-	•	Maximum Likelihood Estimation (MLE) to find optimal tree weights
-  
-	•	Outputs:
-  
-	•	Variance-aware predictions
-  
-	•	Confidence intervals
-  
-	•	Leaf Gaussian visualizations
-  
-	•	Ensemble weight bar charts
-
-The entire system is exposed through a fully interactive Streamlit dashboard.
-
-⸻
-
-📊 Technical Indicators Used
-
-The feature set integrates multiple technical indicators to capture market structure:
-
-	•	RSI (Relative Strength Index)
-  
-	•	MACD (Moving Average Convergence Divergence)
-  
-	•	Williams %R
-  
-	•	Stochastic Oscillator (Slow %K, Slow %D)
-  
-	•	MA50 & MA200
-  
-	•	Lag features
-  
-	•	Date-time decomposition (day, month, year, quarter)
-
-Indicators are computed using pandas-ta for seamless deployment.
+The key idea is:
+models are trained offline, stored as artifacts in the repo, and the Streamlit app only performs fast inference and visualisation.
 
 
-📈 Key Features
+1. Project Overview
 
-✔ Distribution-Based Forecasting
+This project forecasts the next-day closing price of Amazon stock (AMZN) and exposes the full predictive distribution rather than just a point forecast.
 
-Not just a number — full probability distribution over future closing prices.
+The workflow is:
 
-✔ Uncertainty Quantification
+	1.	Data & features
+	•	Historical AMZN prices from Yahoo Finance.
+	•	Technical indicators (RSI, WPR, MACD, MA50, MA200, Stochastic Oscillator, etc.).
+	•	Calendar features and lags of the close price.
+	
+	2.	Offline training (train_offline.py)
+	•	Build features on the last 60 months of data.
+	•	Use RFE to select the top 5 features.
+	•	Train a tuned RandomForestRegressor (500 trees).
+	•	Save the trained RF, RFE selector and feature list as artifacts in models/.
+	
+	3.	Online inference (main_app.py)
+	•	Load pre-trained artifacts from models/.
+	•	Load a frozen price history snapshot from data/AMZN.csv (no live training).
+	•	For the last 7 days:
+	•	Collect predictions from each RF tree.
+	•	Fit a Gaussian Mixture Model (GMM) to these tree predictions.
+	•	Extract:
+	•	Mode (most probable price).
+	•	Expected value (GMM average).
+	•	80% prediction interval.
+	•	Probability mass inside ±$1 of the mode.
 
-Variance, confidence intervals, ±$δ interval probability.
-
-✔ Explainability Through Visualization
-	•	BIC curves
-  
-	•	Tree prediction distributions
-  
-	•	Gaussian leaf curves
-  
-	•	Probability heatmaps
-  
-	•	Confidence interval bands
-
-✔ Interactive Dashboard
-
-User-controlled:
-
-	•	Number of years of data
-  
-	•	Number of features
-  
-	•	Indicator selection
-  
-	•	Method comparison
-
-
-🛡️ Disclaimer
-
-This project is developed for academic and educational purposes only.
-It does not constitute financial advice or stock market guidance.
+	
+	4.	Evaluation & calibration
+	•	Point accuracy: RMSE, MAE.
+	•	Distribution quality:
+	•	80% PI coverage.
+	•	Pinball loss (q = 0.5).
+	•	Visual diagnostics (distribution plots, probability heatmap, residuals).
 
 
-📜 License
+2. App Experience
 
-Distributed under the MIT License.
-See LICENSE for details.
+The Streamlit app has two main tabs:
 
+🔮 Forecast
 
-📬 Contact
+	•	Headline metrics
+	•	RMSE (mode prediction)
+	•	MAE (mode prediction)
+	•	RMSE (GMM average prediction)
+	•	MAE (GMM average prediction)
+	•	Last 7 days — interval summary
+	•	Date
+	•	Predicted price (mode)
+	•	Probability that the true close lies within ±$1 of the mode
+	•	Relative probability of the mode
+	•	80% lower and upper bounds
+	•	Plots
+	•	Full-history training vs. test vs. predicted prices.
+	•	Zoomed last-7-days actual vs. predicted plot.
+	•	Advanced diagnostics (slow)
+	•	Per-day GMM distribution plots
+	
+(histogram of tree predictions, GMM PDF, mode, average, actual price, 80% interval).
+	•	Probability heatmap for the last 7 days
+(price vs. date with probability colour scale, overlaying predicted and actual values).
 
-If you have feedback, collaboration requests, or opportunities to discuss:
+🧪 Calibration
+	•	Headline calibration
+	•	80% PI Coverage: fraction of actual closes falling inside the 80% prediction interval.
+	•	Pinball loss (q = 0.5): median quantile loss (equals 0.5 × MAE).
+	•	Residual diagnostics
+	•	Residuals (Actual − GMM average prediction) over the last 7 days.
 
-Sneha Grampurohit
-Master of Science — Data Science
-Germany
-
-GitHub: https://github.com/SnehaGrampurohit
-
-Live App: https://probabilistic-stock-forecasting-grampurohit.streamlit.app/
